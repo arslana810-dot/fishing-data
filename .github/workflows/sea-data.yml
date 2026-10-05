@@ -15,37 +15,77 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    outputs:
+      jobs: ${{ steps.p.outputs.jobs }}
+      start: ${{ steps.p.outputs.start }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: p
+        run: |
+          echo "jobs=$(python scripts/sea_job.py list)" >> "$GITHUB_OUTPUT"
+          echo "start=$(python scripts/sea_job.py start)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        job: ${{ fromJson(needs.plan.outputs.jobs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install copernicusmarine xarray netCDF4 numpy scipy
+      - name: Build ${{ matrix.job }}
+        env:
+          START_ISO: ${{ needs.plan.outputs.start }}
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: python scripts/sea_job.py run "${{ matrix.job }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.job }}
+          path: parts/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: [plan, build]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install
-        run: pip install copernicusmarine xarray netCDF4 numpy
-
-      - name: Build sea tiles
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-*
+          path: parts
+          merge-multiple: true
+      - name: Merge
         env:
-          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
-          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
-        run: python scripts/build_sea.py
-
+          START_ISO: ${{ needs.plan.outputs.start }}
+        run: python scripts/sea_job.py merge
       - uses: actions/configure-pages@v5
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
-
       - id: deploy
         uses: actions/deploy-pages@v4
-
       - name: Keep the daily schedule alive
         run: |
           date -u +"%Y-%m-%dT%H:%MZ" > last_run.txt
