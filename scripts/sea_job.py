@@ -11,6 +11,7 @@ Tile file format "FSH1" (little-endian):
   layer:  uint8 len + src ascii, float32 lat0, lon0, dlat, dlon, uint16 nlat, nlon, uint32 ncells,
           uint16[ncells] cell index (row * nlon + col),
           then for each var in VARS: int16[steps * ncells] (step-major), MISSING = no data
+  Apps must accept 7 or more variables (older tiles had no 'tide').
 """
 import datetime as dt
 import json
@@ -25,8 +26,8 @@ STEPS = DAYS * 24 // STEP_H + 1
 COAST_KM = 35   # keep sea cells within this distance of land
 FILL_KM = 25    # fill model-coastline gaps from the nearest valid cell
 MARGIN = 0.5    # extra degrees downloaded around each box
-VARS = ["hs", "sw", "tp", "dir", "sst", "cs", "cd"]
-SCALES = {"hs": 100, "sw": 100, "tp": 10, "dir": 1, "sst": 10, "cs": 100, "cd": 1}
+VARS = ["hs", "sw", "tp", "dir", "sst", "cs", "cd", "tide"]
+SCALES = {"hs": 100, "sw": 100, "tp": 10, "dir": 1, "sst": 10, "cs": 100, "cd": 1, "tide": 100}
 UNITS = {
     "hs": "wave height, cm",
     "sw": "primary swell height, cm",
@@ -35,6 +36,7 @@ UNITS = {
     "sst": "sea surface temperature, 0.1 C",
     "cs": "surface current speed, cm/s",
     "cd": "surface current direction, deg (flowing towards)",
+    "tide": "tide height relative to mean sea level, cm",
 }
 MISSING = -32768
 PARTS = "parts"
@@ -44,6 +46,7 @@ WORK = "work"
 GLO_WAVE = ("GLOBAL_ANALYSISFORECAST_WAV_001_027", "cmems_mod_glo_wav_anfc_0.083deg_PT3H-i", None)
 GLO_TEMP = ("GLOBAL_ANALYSISFORECAST_PHY_001_024", "cmems_mod_glo_phy-thetao_anfc_0.083deg_PT6H-i", (0.0, 1.0))
 GLO_CUR = ("GLOBAL_ANALYSISFORECAST_PHY_001_024", "cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i", (0.0, 1.0))
+GLO_TIDE = ("GLOBAL_ANALYSISFORECAST_PHY_001_024", "cmems_mod_glo_phy_anfc_merged-sl_PT1H-i", None)
 
 MED_WAVE = ("MEDSEA_ANALYSISFORECAST_WAV_006_017", "cmems_mod_med_wav_anfc_4.2km_PT1H-i", None)
 MED_TEMP = ("MEDSEA_ANALYSISFORECAST_PHY_006_013", "cmems_mod_med_phy-tem_anfc_4.2km-2D_PT1H-m", None)
@@ -66,7 +69,7 @@ def jobs():
             out[f"g_{tag(lon)}_{tag(lat_edges[i])}"] = {
                 "src": "glo",
                 "bbox": (float(lon), float(lon + 30), float(lat_edges[i]), float(lat_edges[i + 1])),
-                "wave": GLO_WAVE, "temp": GLO_TEMP, "cur": GLO_CUR,
+                "wave": GLO_WAVE, "temp": GLO_TEMP, "cur": GLO_CUR, "tide": GLO_TIDE,
             }
     for name, lon0, lon1 in (("r_med_w", -6.0, 12.0), ("r_med_c", 12.0, 24.0), ("r_med_e", 24.0, 36.3)):
         out[name] = {"src": "med", "bbox": (lon0, lon1, 30.0, 46.0),
@@ -183,6 +186,17 @@ def run(name):
         "u": grid(c["uo"]),
         "v": grid(c["vo"]),
     }
+
+    # Tide is optional: a problem with it must never stop the rest of the job.
+    raw["tide"] = np.full_like(raw["hs"], np.nan)
+    if cfg.get("tide"):
+        try:
+            td = fetch(cfg["tide"], ["ocean_tide"], "tide")
+            td = td.reindex(latitude=w["latitude"], longitude=w["longitude"], method="nearest", tolerance=tol)
+            raw["tide"] = grid(td["ocean_tide"])
+        except Exception as e:
+            print("  tide skipped:", type(e).__name__, e)
+
     sea = np.isfinite(raw["hs"]).any(axis=0) | np.isfinite(raw["sst"]).any(axis=0)
     if not sea.any():
         print("  no sea cells in this box")
@@ -213,6 +227,7 @@ def run(name):
         "sst": filled["sst"],
         "cs": np.sqrt(u * u + v * v),
         "cd": (np.degrees(np.arctan2(u, v)) + 360.0) % 360.0,
+        "tide": filled["tide"],
     }
     coastal = sea & binary_dilation(~sea, iterations=coast_cells)
 
@@ -244,7 +259,10 @@ def run(name):
 def doi_map(cfg):
     import copernicusmarine as cm
     out = {}
-    for spec in (cfg["wave"], cfg["temp"], cfg["cur"]):
+    for key in ("wave", "temp", "cur", "tide"):
+        spec = cfg.get(key)
+        if not spec:
+            continue
         pid = spec[0]
         if pid in out:
             continue
@@ -304,7 +322,7 @@ def merge():
         total += len(blob)
 
     index = {
-        "v": 2,
+        "v": 3,
         "format": "FSH1",
         "t0": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "step_h": STEP_H,
