@@ -1,0 +1,60 @@
+name: Probe Copernicus
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Copernicus toolbox
+        run: pip install copernicusmarine
+
+      - name: Probe login and datasets
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: |
+          python - <<'EOF'
+          import copernicusmarine as cm
+
+          print("toolbox version:", getattr(cm, "__version__", "?"))
+
+          try:
+              ok = cm.login(check_credentials_valid=True)
+              print(">>> LOGIN OK" if ok else ">>> LOGIN FAILED")
+          except Exception as e:
+              print(">>> LOGIN ERROR:", type(e).__name__, e)
+
+          products = [
+              "MEDSEA_ANALYSISFORECAST_WAV_006_017",
+              "MEDSEA_ANALYSISFORECAST_PHY_006_013",
+              "BLKSEA_ANALYSISFORECAST_WAV_007_003",
+              "BLKSEA_ANALYSISFORECAST_PHY_007_001",
+              "GLOBAL_ANALYSISFORECAST_WAV_001_027",
+              "GLOBAL_ANALYSISFORECAST_PHY_001_024",
+          ]
+
+          for pid in products:
+              print("=" * 70)
+              print("PRODUCT", pid)
+              try:
+                  cat = cm.describe(product_id=pid)
+                  for prod in cat.products:
+                      for ds in prod.datasets:
+                          names = set()
+                          for ver in ds.versions:
+                              for part in ver.parts:
+                                  for svc in part.services:
+                                      for var in (svc.variables or []):
+                                          names.add(var.short_name)
+                          print("  DATASET", ds.dataset_id)
+                          print("     vars:", ", ".join(sorted(names)))
+              except Exception as e:
+                  print("  ERROR:", type(e).__name__, e)
+          EOF
