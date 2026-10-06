@@ -26,6 +26,7 @@ import numpy as np
 
 COOP = "https://data.source.coop/giswqs/gebco-bathymetry/"
 COG_CANDIDATES = [
+    COOP + "gebco_2026/gebco_2026.tif",  # confirmed by the folder listing (Oct 2026)
     COOP + "gebco_2026_geotiff/gebco_2026.tif",
     COOP + "gebco_2026/gebco_2026_geotiff/gebco_2026.tif",
     COOP + "gebco_2026_geotiff/GEBCO_2026.tif",
@@ -106,9 +107,27 @@ class CogSource:
         return f"COG {self.url} | {ds.width}x{ds.height} {ds.dtypes} {ds.crs}"
 
 
+def listed_cogs():
+    """Global GEBCO files found in the cloud folder listing (newest year first)."""
+    try:
+        req = urllib.request.Request(LIST_URL, headers={"User-Agent": "OneDiveFishing/0.1"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            text = r.read().decode("utf-8", "replace")
+    except Exception:
+        return []
+    keys = [k.split("</Key>")[0] for k in text.split("<Key>")[1:]]
+    found = []
+    for k in keys:
+        name = k.rsplit("/", 1)[-1]
+        # the global grid only: "gebco_YYYY.tif" (not tiles, web-mercator, sub-ice or TID files)
+        if name.startswith("gebco_") and name.endswith(".tif") and name[6:-4].isdigit():
+            found.append(COOP + k.split("/", 1)[1])
+    return sorted(found, reverse=True)
+
+
 def find_cog():
     import rasterio
-    for url in COG_CANDIDATES:
+    for url in COG_CANDIDATES + [u for u in listed_cogs() if u not in COG_CANDIDATES]:
         try:
             with rasterio.open("/vsicurl/" + url) as ds:
                 if ds.width >= 86000:
