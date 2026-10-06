@@ -69,28 +69,37 @@ def get_json(url):
 
 
 def taxon_id(name):
-    q = urllib.parse.urlencode({"q": name, "rank": "species", "per_page": 10})
-    res = get_json(f"{API}/taxa?{q}")
-    for t in res.get("results", []):
-        if t.get("name", "").lower() == name.lower():
-            return t["id"]
-    raise RuntimeError("taxon not found: " + name)
+    """iNaturalist taxon id for an exact species name, or None (the species is then skipped)."""
+    searches = [
+        f"{API}/taxa?" + urllib.parse.urlencode({"q": name, "rank": "species", "per_page": 30}),
+        f"{API}/taxa/autocomplete?" + urllib.parse.urlencode({"q": name, "per_page": 30}),
+    ]
+    for url in searches:
+        try:
+            res = get_json(url)
+        except Exception:
+            continue
+        for t in res.get("results", []):
+            if (t.get("name") or "").lower() == name.lower() and t.get("rank") == "species":
+                return t["id"]
+        time.sleep(1.1)
+    return None
 
 
 def photos_from_observations(results):
     """First photo of each observation, with licence and author (pure function, tested)."""
     out = []
     for obs in results:
-        photos = obs.get("photos") or []
-        if not photos:
+        p = None
+        for candidate in obs.get("photos") or []:
+            lic = (candidate.get("license_code") or "").lower()
+            if lic in ("cc0", "cc-by") and "square" in (candidate.get("url") or ""):
+                p = candidate
+                break
+        if p is None:
             continue
-        p = photos[0]
         lic = (p.get("license_code") or "").lower()
-        if lic not in ("cc0", "cc-by"):
-            continue
         url = p.get("url") or ""
-        if "square" not in url:
-            continue
         out.append({
             "photo_id": p.get("id"),
             "url": url.replace("square", "medium"),
@@ -104,17 +113,26 @@ def photos_from_observations(results):
 def collect():
     os.makedirs(DATA, exist_ok=True)
     manifest = []
+    not_found = []
     for sid, name in SPECIES.items():
         tid = taxon_id(name)
         time.sleep(1.1)
+        if tid is None:
+            not_found.append(sid)
+            print(f"{sid}: SKIPPED (name not found on iNaturalist)")
+            continue
         found = []
         page = 1
-        while len(found) < MAX_PER_SPECIES and page <= 5:
+        while len(found) < MAX_PER_SPECIES and page <= 8:
             q = urllib.parse.urlencode({
                 "taxon_id": tid, "quality_grade": "research", "photos": "true",
-                "photo_license": "cc0,cc-by", "per_page": 200, "page": page, "order_by": "votes",
+                "photo_license": "cc0,cc-by", "per_page": 200, "page": page,
             })
-            res = get_json(f"{API}/observations?{q}")
+            try:
+                res = get_json(f"{API}/observations?{q}")
+            except Exception as e:
+                print(f"    {sid}: page {page} failed ({e}), keeping what we have")
+                break
             batch = photos_from_observations(res.get("results", []))
             found.extend(batch)
             time.sleep(1.1)
@@ -145,7 +163,7 @@ def collect():
         print(f"{sid}: {len(ok)} photos")
     with open(os.path.join(DATA, "manifest.json"), "w") as f:
         json.dump(manifest, f)
-    print("COLLECT DONE:", len(manifest), "photos")
+    print("COLLECT DONE:", len(manifest), "photos | not found:", not_found)
 
 
 def split_files(files, val_share=0.15, seed=7):
