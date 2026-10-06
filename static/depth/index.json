@@ -1,0 +1,8 @@
+{
+ "format": "DPT1",
+ "n": 120,
+ "source": "COG https://data.source.coop/giswqs/gebco-bathymetry/gebco_2026/gebco_2026.tif | 86400x43200 ('int16',) EPSG:4326",
+ "attribution": "GEBCO Compilation Group (2026) GEBCO 2026 Grid. Not to be used for navigation.",
+ "tiles": 5621,
+ "failed": {}
+}
