@@ -80,6 +80,10 @@ jobs:
         env:
           START_ISO: ${{ needs.plan.outputs.start }}
         run: python scripts/sea_job.py merge
+      - name: Add static data (depth tiles)
+        run: |
+          if [ -d static ]; then cp -r static/. site/; fi
+          ls site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -93,4 +97,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add last_run.txt
           git commit -m "Daily sea data run" || true
+          git pull --rebase || true
           git push || true
