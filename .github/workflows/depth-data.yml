@@ -30,8 +30,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Free disk space (the official GEBCO file is large)
+        if: ${{ inputs.mode == 'build' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - name: Install
-        run: pip install rasterio numpy
+        run: pip install rasterio numpy netCDF4
 
       - name: Run (${{ inputs.mode }})
         run: python scripts/depth_job.py ${{ inputs.mode }}
