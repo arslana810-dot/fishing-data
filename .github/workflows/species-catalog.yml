@@ -1,0 +1,37 @@
+name: Species catalog
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repo-writes
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install numpy netCDF4
+
+      - name: Build the worldwide species catalogue
+        run: python scripts/build_species.py
+
+      - name: Save the catalogue to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/species
+          git commit -m "Worldwide species catalogue" || true
+          git pull --rebase
+          git push
