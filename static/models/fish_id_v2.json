@@ -1,0 +1,167 @@
+{
+ "version": "fish_id_v2",
+ "labels": [
+  "centropomus_undecimalis",
+  "chrysophrys_auratus",
+  "cyprinus_carpio",
+  "dicentrarchus_labrax",
+  "esox_lucius",
+  "gadus_morhua",
+  "ictalurus_punctatus",
+  "micropterus_salmoides",
+  "morone_saxatilis",
+  "mugil_cephalus",
+  "oncorhynchus_mykiss",
+  "perca_fluviatilis",
+  "pomatomus_saltatrix",
+  "salmo_trutta",
+  "sander_lucioperca",
+  "sander_vitreus",
+  "sciaenops_ocellatus",
+  "scomber_scombrus",
+  "silurus_glanis",
+  "sparus_aurata"
+ ],
+ "input_size": 224,
+ "input": "RGB, 0-255 float32 (scaling is inside the model)",
+ "test_top1": 0.592,
+ "test_top3": 0.809,
+ "per_species_top1": {
+  "centropomus_undecimalis": 0.235,
+  "chrysophrys_auratus": 0.836,
+  "cyprinus_carpio": 0.767,
+  "dicentrarchus_labrax": 0.327,
+  "esox_lucius": 0.492,
+  "gadus_morhua": 0.474,
+  "ictalurus_punctatus": 0.689,
+  "micropterus_salmoides": 0.439,
+  "morone_saxatilis": 0.676,
+  "mugil_cephalus": 0.5,
+  "oncorhynchus_mykiss": 0.514,
+  "perca_fluviatilis": 0.713,
+  "pomatomus_saltatrix": 0.433,
+  "salmo_trutta": 0.63,
+  "sander_lucioperca": 0.227,
+  "sander_vitreus": 0.662,
+  "sciaenops_ocellatus": 0.346,
+  "scomber_scombrus": 0.524,
+  "silurus_glanis": 0.143,
+  "sparus_aurata": 0.551
+ },
+ "per_species_top3": {
+  "centropomus_undecimalis": 0.412,
+  "chrysophrys_auratus": 0.91,
+  "cyprinus_carpio": 0.906,
+  "dicentrarchus_labrax": 0.788,
+  "esox_lucius": 0.743,
+  "gadus_morhua": 0.632,
+  "ictalurus_punctatus": 0.872,
+  "micropterus_salmoides": 0.719,
+  "morone_saxatilis": 0.926,
+  "mugil_cephalus": 0.755,
+  "oncorhynchus_mykiss": 0.787,
+  "perca_fluviatilis": 0.867,
+  "pomatomus_saltatrix": 0.6,
+  "salmo_trutta": 0.859,
+  "sander_lucioperca": 0.5,
+  "sander_vitreus": 0.825,
+  "sciaenops_ocellatus": 0.577,
+  "scomber_scombrus": 0.714,
+  "silurus_glanis": 0.524,
+  "sparus_aurata": 0.837
+ },
+ "most_confused": [
+  [
+   "oncorhynchus_mykiss -> salmo_trutta",
+   26
+  ],
+  [
+   "mugil_cephalus -> cyprinus_carpio",
+   24
+  ],
+  [
+   "salmo_trutta -> cyprinus_carpio",
+   22
+  ],
+  [
+   "salmo_trutta -> oncorhynchus_mykiss",
+   20
+  ],
+  [
+   "esox_lucius -> morone_saxatilis",
+   17
+  ],
+  [
+   "esox_lucius -> cyprinus_carpio",
+   17
+  ],
+  [
+   "oncorhynchus_mykiss -> cyprinus_carpio",
+   16
+  ],
+  [
+   "esox_lucius -> micropterus_salmoides",
+   14
+  ],
+  [
+   "dicentrarchus_labrax -> chrysophrys_auratus",
+   11
+  ],
+  [
+   "ictalurus_punctatus -> cyprinus_carpio",
+   11
+  ],
+  [
+   "micropterus_salmoides -> cyprinus_carpio",
+   10
+  ],
+  [
+   "perca_fluviatilis -> micropterus_salmoides",
+   10
+  ],
+  [
+   "esox_lucius -> salmo_trutta",
+   9
+  ],
+  [
+   "ictalurus_punctatus -> morone_saxatilis",
+   9
+  ],
+  [
+   "oncorhynchus_mykiss -> esox_lucius",
+   9
+  ]
+ ],
+ "test_split": "by observation (a fish is never in both training and test)",
+ "trained": "2026-10-07",
+ "photos_per_species": {
+  "centropomus_undecimalis": 127,
+  "chrysophrys_auratus": 446,
+  "cyprinus_carpio": 1200,
+  "dicentrarchus_labrax": 368,
+  "esox_lucius": 1200,
+  "gadus_morhua": 130,
+  "ictalurus_punctatus": 1133,
+  "micropterus_salmoides": 380,
+  "morone_saxatilis": 458,
+  "mugil_cephalus": 741,
+  "oncorhynchus_mykiss": 1200,
+  "perca_fluviatilis": 1200,
+  "pomatomus_saltatrix": 213,
+  "salmo_trutta": 1200,
+  "sander_lucioperca": 132,
+  "sander_vitreus": 509,
+  "sciaenops_ocellatus": 185,
+  "scomber_scombrus": 130,
+  "silurus_glanis": 141,
+  "sparus_aurata": 360
+ },
+ "skipped_species": [
+  "lateolabrax_japonicus",
+  "loligo_vulgaris",
+  "sarda_sarda",
+  "trachurus_trachurus"
+ ],
+ "training_photos": "iNaturalist research-grade observations, CC0 / CC-BY only",
+ "base_model": "MobileNetV3Large, ImageNet weights (Apache-2.0)"
+}
