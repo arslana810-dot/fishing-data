@@ -50,10 +50,12 @@ API = "https://api.inaturalist.org/v1"
 UA = {"User-Agent": "OneDiveFishing/0.1 (github.com/arslana810-dot/fishing-data)"}
 DATA = "fishdata"
 OUT = os.path.join("static", "models")
-MAX_PER_SPECIES = 600
-MIN_PER_SPECIES = 80
+MAX_PER_SPECIES = 1200
+MIN_PER_SPECIES = 70
+PHOTOS_PER_OBSERVATION = 2  # different angles of the same fish
+MAX_PAGES = 25
 IMG = 224
-VERSION = "fish_id_v1"
+VERSION = "fish_id_v2"
 
 
 def get_json(url):
@@ -86,27 +88,26 @@ def taxon_id(name):
     return None
 
 
-def photos_from_observations(results):
-    """First photo of each observation, with licence and author (pure function, tested)."""
+def photos_from_observations(results, per_obs=PHOTOS_PER_OBSERVATION):
+    """Up to [per_obs] CC0 / CC-BY photos of each observation, with licence and author (pure function, tested)."""
     out = []
     for obs in results:
-        p = None
-        for candidate in obs.get("photos") or []:
-            lic = (candidate.get("license_code") or "").lower()
-            if lic in ("cc0", "cc-by") and "square" in (candidate.get("url") or ""):
-                p = candidate
+        taken = 0
+        for p in obs.get("photos") or []:
+            if taken >= per_obs:
                 break
-        if p is None:
-            continue
-        lic = (p.get("license_code") or "").lower()
-        url = p.get("url") or ""
-        out.append({
-            "photo_id": p.get("id"),
-            "url": url.replace("square", "medium"),
-            "license": lic,
-            "attribution": p.get("attribution") or "",
-            "observation": obs.get("id"),
-        })
+            lic = (p.get("license_code") or "").lower()
+            url = p.get("url") or ""
+            if lic not in ("cc0", "cc-by") or "square" not in url:
+                continue
+            out.append({
+                "photo_id": p.get("id"),
+                "url": url.replace("square", "medium"),
+                "license": lic,
+                "attribution": p.get("attribution") or "",
+                "observation": obs.get("id"),
+            })
+            taken += 1
     return out
 
 
@@ -123,7 +124,7 @@ def collect():
             continue
         found = []
         page = 1
-        while len(found) < MAX_PER_SPECIES and page <= 8:
+        while len(found) < MAX_PER_SPECIES and page <= MAX_PAGES:
             q = urllib.parse.urlencode({
                 "taxon_id": tid, "quality_grade": "research", "photos": "true",
                 "photo_license": "cc0,cc-by", "per_page": 200, "page": page,
@@ -167,11 +168,26 @@ def collect():
 
 
 def split_files(files, val_share=0.15, seed=7):
-    """Deterministic train/validation split per species (pure function, tested)."""
+    """Deterministic train/validation split of plain files (pure function, tested)."""
     files = sorted(files)
     random.Random(seed).shuffle(files)
     n_val = max(1, int(len(files) * val_share))
     return files[n_val:], files[:n_val]
+
+
+def split_by_observation(items, val_share=0.15, seed=7):
+    """Splits photos so all photos of one observation (one fish) stay on the same side.
+    Keeps the test honest: the model is never tested on a fish it has already seen."""
+    groups = {}
+    for it in items:
+        groups.setdefault(str(it.get("observation")), []).append(it)
+    keys = sorted(groups)
+    random.Random(seed).shuffle(keys)
+    n_val = max(1, int(len(keys) * val_share))
+    val_keys = set(keys[:n_val])
+    train = [it for k in keys if k not in val_keys for it in groups[k]]
+    val = [it for k in keys if k in val_keys for it in groups[k]]
+    return train, val
 
 
 def train():
@@ -190,19 +206,20 @@ def train():
 
     split_root = "fishsplit"
     shutil.rmtree(split_root, ignore_errors=True)
+    train_counts = {}
     for sid in labels:
-        files = [os.path.join(DATA, sid, f"{m['photo_id']}.jpg") for m in by_species[sid]]
-        files = [p for p in files if os.path.exists(p)]
-        tr, va = split_files(files)
-        for part, items in (("train", tr), ("val", va)):
+        items = [m for m in by_species[sid] if os.path.exists(os.path.join(DATA, sid, f"{m['photo_id']}.jpg"))]
+        tr, va = split_by_observation(items)
+        train_counts[sid] = len(tr)
+        for part, chosen in (("train", tr), ("val", va)):
             d = os.path.join(split_root, part, sid)
             os.makedirs(d, exist_ok=True)
-            for p in items:
-                shutil.copy(p, d)
+            for m in chosen:
+                shutil.copy(os.path.join(DATA, sid, f"{m['photo_id']}.jpg"), d)
 
     def ds(part, shuffle):
         return tf.keras.utils.image_dataset_from_directory(
-            os.path.join(split_root, part), labels="inferred", label_mode="int", class_names=labels,
+            os.path.join(split_root, part), labels="inferred", label_mode="categorical", class_names=labels,
             image_size=(IMG, IMG), batch_size=32, shuffle=shuffle, seed=7)
 
     train_ds = ds("train", True).prefetch(tf.data.AUTOTUNE)
@@ -210,9 +227,11 @@ def train():
 
     augment = tf.keras.Sequential([
         tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.08),
-        tf.keras.layers.RandomZoom(0.15),
-        tf.keras.layers.RandomContrast(0.15),
+        tf.keras.layers.RandomRotation(0.1),
+        tf.keras.layers.RandomZoom(0.2),
+        tf.keras.layers.RandomTranslation(0.1, 0.1),
+        tf.keras.layers.RandomContrast(0.2),
+        tf.keras.layers.RandomBrightness(0.15, value_range=(0, 255)),
     ])
     base = tf.keras.applications.MobileNetV3Large(
         input_shape=(IMG, IMG, 3), include_top=False, weights="imagenet",
@@ -221,26 +240,34 @@ def train():
     inputs = tf.keras.Input(shape=(IMG, IMG, 3))
     x = augment(inputs)
     x = base(x, training=False)
-    x = tf.keras.layers.Dropout(0.25)(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
     outputs = tf.keras.layers.Dense(len(labels), activation="softmax")(x)
     model = tf.keras.Model(inputs, outputs)
-    metrics = ["accuracy", tf.keras.metrics.SparseTopKCategoricalAccuracy(k=3, name="top3")]
-    model.compile(optimizer=tf.keras.optimizers.Adam(1e-3), loss="sparse_categorical_crossentropy", metrics=metrics)
+    metrics = ["accuracy", tf.keras.metrics.TopKCategoricalAccuracy(k=3, name="top3")]
+    loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1)
+    # Species with few photos count more, so the model does not ignore them.
+    total = sum(train_counts.values())
+    class_weight = {i: total / (len(labels) * max(1, train_counts[sid])) for i, sid in enumerate(labels)}
     stop = tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=3, restore_best_weights=True)
-    model.fit(train_ds, validation_data=val_ds, epochs=15, callbacks=[stop], verbose=2)
 
-    # Fine-tune the top of the base network a little.
+    model.compile(optimizer=tf.keras.optimizers.Adam(1e-3), loss=loss, metrics=metrics)
+    model.fit(train_ds, validation_data=val_ds, epochs=12, callbacks=[stop], class_weight=class_weight, verbose=2)
+
+    # Fine-tune the upper part of the base network (batch-norm layers stay frozen).
     base.trainable = True
-    for layer in base.layers[:-40]:
+    for layer in base.layers[:-100]:
         layer.trainable = False
-    model.compile(optimizer=tf.keras.optimizers.Adam(1e-5), loss="sparse_categorical_crossentropy", metrics=metrics)
-    model.fit(train_ds, validation_data=val_ds, epochs=6, callbacks=[stop], verbose=2)
+    for layer in base.layers:
+        if isinstance(layer, tf.keras.layers.BatchNormalization):
+            layer.trainable = False
+    model.compile(optimizer=tf.keras.optimizers.Adam(3e-5), loss=loss, metrics=metrics)
+    model.fit(train_ds, validation_data=val_ds, epochs=12, callbacks=[stop], class_weight=class_weight, verbose=2)
 
     # Honest test numbers on photos the model never trained on.
     y_true, y_pred = [], []
     for xb, yb in val_ds:
         p = model.predict(xb, verbose=0)
-        y_true.extend(yb.numpy().tolist())
+        y_true.extend(np.argmax(yb.numpy(), axis=1).tolist())
         y_pred.extend(p.tolist())
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
@@ -251,9 +278,20 @@ def train():
         mask = y_true == i
         if mask.any():
             per_class[sid] = round(float((y_pred[mask].argmax(1) == i).mean()), 3)
+    per_class_top3 = {}
+    for i, sid in enumerate(labels):
+        mask = y_true == i
+        if mask.any():
+            per_class_top3[sid] = round(float(np.mean([i in np.argsort(-p)[:3] for p in y_pred[mask]])), 3)
+    confusions = {}
+    for t, p in zip(y_true, y_pred.argmax(1)):
+        if t != p:
+            key = f"{labels[t]} -> {labels[p]}"
+            confusions[key] = confusions.get(key, 0) + 1
     print(f"TEST top-1 accuracy: {top1:.3f} | top-3 accuracy: {top3:.3f}")
     for sid, acc in sorted(per_class.items(), key=lambda kv: kv[1]):
-        print(f"  {sid}: {acc:.2f}")
+        print(f"  {sid}: top-1 {acc:.2f} | top-3 {per_class_top3.get(sid, 0):.2f}")
+    print("MOST CONFUSED:", sorted(confusions.items(), key=lambda kv: -kv[1])[:10])
 
     # Export a small model for phones (float16).
     os.makedirs(OUT, exist_ok=True)
@@ -279,6 +317,9 @@ def train():
         "test_top1": round(top1, 3),
         "test_top3": round(top3, 3),
         "per_species_top1": per_class,
+        "per_species_top3": per_class_top3,
+        "most_confused": sorted(confusions.items(), key=lambda kv: -kv[1])[:15],
+        "test_split": "by observation (a fish is never in both training and test)",
         "trained": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d"),
         "photos_per_species": {s: len(by_species[s]) for s in labels},
         "skipped_species": skipped,
